@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import chardet
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -62,6 +64,35 @@ def _prepare_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def detect_encoding(path: Path) -> str:
+    with path.open("rb") as buffer:
+        raw = buffer.read(4096)
+    guess = chardet.detect(raw)
+    encoding = guess.get("encoding", "utf-8")
+    print(f"[INFO] Detected encoding: {encoding}")
+    return encoding or "utf-8"
+
+
+def _open_csv(csv_path: Path, encoding: str):
+    try:
+        return csv_path.open("r", encoding=encoding, newline="")
+    except UnicodeDecodeError:
+        print("[WARN] Fallback para latin1 devido a erro de decodificação.")
+        return csv_path.open("r", encoding="latin1", newline="")
+
+
+def _prepare_reader(handle):
+    sample = handle.read(2048)
+    handle.seek(0)
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+        handle.seek(0)
+        return csv.DictReader(handle, dialect=dialect)
+    except csv.Error:
+        handle.seek(0)
+        return csv.DictReader(handle)
+
+
 def import_csv(path: str) -> Dict[str, Any]:
     """Import cards from a CSV file located at ``path``.
 
@@ -74,8 +105,9 @@ def import_csv(path: str) -> Dict[str, Any]:
         raise FileNotFoundError(f"CSV file not found: {csv_path}")
 
     stats: Dict[str, Any] = {"created": 0, "updated": 0, "skipped": 0, "errors": []}
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
+    encoding = detect_encoding(csv_path)
+    with _open_csv(csv_path, encoding) as handle:
+        reader = _prepare_reader(handle)
         session: Session = SessionLocal()
         try:
             for index, row in enumerate(reader, start=1):
