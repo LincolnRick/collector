@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.exc import IntegrityError
 
 from ..db import Base, SessionLocal, engine
 from ..models import Card, CollectionItem
@@ -92,6 +93,76 @@ class CardOut(BaseModel):
     price_quotes: List[PriceOut] = Field(default_factory=list)
 
 
+class CardCreatePayload(BaseModel):
+    """Payload recebido na criação de cartas via API legada (em português)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    nome: str = Field(..., min_length=1)
+    set_id: str = Field(..., min_length=1)
+    numero: str = Field(..., min_length=1)
+    hp: Optional[str] = None
+    tipo: Optional[str] = None
+    raridade: Optional[str] = None
+    set: Optional[str] = None
+    artista: Optional[str] = None
+    habilidade_nome: Optional[str] = None
+    habilidade_desc: Optional[str] = None
+    ataques: Optional[Any] = None
+    fraquezas: Optional[Any] = None
+    resistencias: Optional[Any] = None
+    recuo: Optional[Any] = None
+    imagem: Optional[str] = None
+    possui: bool = False
+
+
+class CardUpdatePayload(BaseModel):
+    """Payload utilizado para atualizar campos das cartas existentes."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    nome: Optional[str] = Field(default=None, min_length=1)
+    set_id: Optional[str] = Field(default=None, min_length=1)
+    numero: Optional[str] = Field(default=None, min_length=1)
+    hp: Optional[str] = None
+    tipo: Optional[str] = None
+    raridade: Optional[str] = None
+    set: Optional[str] = None
+    artista: Optional[str] = None
+    habilidade_nome: Optional[str] = None
+    habilidade_desc: Optional[str] = None
+    ataques: Optional[Any] = None
+    fraquezas: Optional[Any] = None
+    resistencias: Optional[Any] = None
+    recuo: Optional[Any] = None
+    imagem: Optional[str] = None
+    possui: Optional[bool] = None
+
+
+class CardOutPT(BaseModel):
+    """Representação compatível com o frontend Streamlit (campos em português)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nome: str
+    hp: Optional[str] = None
+    tipo: Optional[str] = None
+    raridade: Optional[str] = None
+    set: Optional[str] = None
+    set_id: str
+    numero: str
+    artista: Optional[str] = None
+    habilidade_nome: Optional[str] = None
+    habilidade_desc: Optional[str] = None
+    ataques: Optional[str] = None
+    fraquezas: Optional[str] = None
+    resistencias: Optional[str] = None
+    recuo: Optional[str] = None
+    imagem: Optional[str] = None
+    possui: bool = False
+
+
 class CollectionCreate(BaseModel):
     """Payload used to create items in the user's collection."""
 
@@ -115,7 +186,7 @@ class CollectionOut(BaseModel):
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    card: Optional[CardOut] = None
+    card: Optional[CardOutPT] = None
 
 
 class ImportResult(BaseModel):
@@ -220,6 +291,165 @@ def _card_to_schema(card: Card) -> CardOut:
     return card_schema
 
 
+def _fetch_card(db: Session, card_id: int) -> Optional[Card]:
+    return (
+        db.execute(
+            select(Card)
+            .options(selectinload(Card.collection_items), selectinload(Card.price_quotes))
+            .where(Card.id == card_id)
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _normalize_optional_str(value: Optional[Any]) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_list_payload(value: Optional[Any]) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item).strip()]
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            tokens = [token.strip() for token in text.replace(",", "|").split("|") if token.strip()]
+            items = tokens
+        else:
+            if isinstance(parsed, list):
+                items = [str(item).strip() for item in parsed if str(item).strip()]
+            elif isinstance(parsed, str):
+                items = [parsed.strip()] if parsed.strip() else []
+            else:
+                items = [str(parsed).strip()] if str(parsed).strip() else []
+    if not items:
+        return None
+    return json.dumps(items, ensure_ascii=False)
+
+
+def _list_to_text(value: Optional[str]) -> Optional[str]:
+    items = _load_json_list(value)
+    if not items:
+        return None
+    return " | ".join(items)
+
+
+def _normalize_attacks_payload(value: Optional[Any]) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    text = str(value).strip()
+    return text or None
+
+
+def _attacks_to_text(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    if isinstance(data, list):
+        summaries: List[str] = []
+        for attack in data:
+            if not isinstance(attack, dict):
+                continue
+            name = str(attack.get("name") or "").strip()
+            damage = str(attack.get("damage") or "").strip()
+            text = str(attack.get("text") or "").strip()
+            parts: List[str] = []
+            if name:
+                parts.append(name)
+            if damage:
+                parts.append(f"Dano: {damage}")
+            if text:
+                parts.append(text)
+            if parts:
+                summaries.append(" - ".join(parts))
+        if summaries:
+            return " | ".join(summaries)
+        return None
+    return value
+
+
+def _apply_card_payload(card: Card, payload: Dict[str, Any]) -> None:
+    mapping = {
+        "nome": "name",
+        "hp": "hp",
+        "tipo": "types",
+        "raridade": "rarity",
+        "set": "set_name",
+        "set_id": "set_id",
+        "numero": "number",
+        "artista": "artist",
+        "habilidade_nome": "ability_name",
+        "habilidade_desc": "ability_text",
+        "ataques": "attacks",
+        "fraquezas": "weaknesses",
+        "resistencias": "resistances",
+        "recuo": "retreat_cost",
+    }
+    for field, value in payload.items():
+        if field not in mapping:
+            continue
+        if field in {"fraquezas", "resistencias", "recuo"}:
+            normalized = _normalize_list_payload(value)
+        elif field == "tipo":
+            normalized = _normalize_list_payload(value)
+        elif field == "ataques":
+            normalized = _normalize_attacks_payload(value)
+        else:
+            normalized = _normalize_optional_str(value)
+        setattr(card, mapping[field], normalized)
+    image_value = payload.get("imagem")
+    if image_value is not None:
+        normalized_image = _normalize_optional_str(image_value)
+        if normalized_image and normalized_image.lower().startswith("http"):
+            card.image_url = normalized_image
+            card.image_path = None
+        else:
+            card.image_path = normalized_image
+            card.image_url = None
+
+
+def _card_to_pt_schema(card: Card) -> CardOutPT:
+    types = _load_json_list(card.types)
+    weaknesses = _list_to_text(card.weaknesses)
+    resistances = _list_to_text(card.resistances)
+    retreat = _list_to_text(card.retreat_cost)
+    image = card.image_path or card.image_url
+    possui = any(item.quantity > 0 for item in card.collection_items)
+    return CardOutPT(
+        id=card.id,
+        nome=card.name,
+        hp=card.hp,
+        tipo=types[0] if types else None,
+        raridade=card.rarity,
+        set=card.set_name,
+        set_id=card.set_id,
+        numero=card.number,
+        artista=card.artist,
+        habilidade_nome=card.ability_name,
+        habilidade_desc=card.ability_text,
+        ataques=_attacks_to_text(card.attacks),
+        fraquezas=weaknesses,
+        resistencias=resistances,
+        recuo=retreat,
+        imagem=image,
+        possui=possui,
+    )
+
+
 def _collection_to_schema(item: CollectionItem) -> CollectionOut:
     return CollectionOut(
         id=item.id,
@@ -230,13 +460,13 @@ def _collection_to_schema(item: CollectionItem) -> CollectionOut:
         notes=item.notes,
         created_at=item.created_at,
         updated_at=item.updated_at,
-        card=_card_to_schema(item.card) if item.card else None,
+        card=_card_to_pt_schema(item.card) if item.card else None,
     )
 
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
-    return {"ok": True, "ts": datetime.utcnow().isoformat()}
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
 @app.post("/import/csv", response_model=ImportResult)
@@ -260,7 +490,75 @@ async def import_csv_endpoint(
     return ImportResult(**result)
 
 
-@app.get("/cards", response_model=List[CardOut])
+@app.post("/cards", response_model=CardOutPT, status_code=201)
+def create_card(payload: CardCreatePayload, db: Session = Depends(get_db)) -> CardOutPT:
+    existing = (
+        db.execute(
+            select(Card).where(Card.set_id == payload.set_id, Card.number == payload.numero)
+        )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Card já cadastrado para este conjunto e número")
+
+    card = Card(name=payload.nome, set_id=payload.set_id, number=payload.numero)
+    data = payload.model_dump()
+    possui = data.pop("possui", False)
+    _apply_card_payload(card, data)
+
+    db.add(card)
+    if possui:
+        db.add(CollectionItem(card=card, quantity=1, for_trade=False))
+
+    try:
+        db.commit()
+    except IntegrityError as exc:  # pragma: no cover - integridade do banco
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Card já cadastrado") from exc
+
+    card = _fetch_card(db, card.id) or card
+    return _card_to_pt_schema(card)
+
+
+@app.patch("/cards/{card_id}", response_model=CardOutPT)
+def update_card_endpoint(
+    card_id: int, payload: CardUpdatePayload, db: Session = Depends(get_db)
+) -> CardOutPT:
+    card = db.get(Card, card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Card não encontrado")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    possui = update_data.pop("possui", None)
+    if update_data:
+        _apply_card_payload(card, update_data)
+
+    if possui is not None:
+        items = (
+            db.execute(select(CollectionItem).where(CollectionItem.card_id == card.id))
+            .scalars()
+            .all()
+        )
+        if possui:
+            if not items:
+                db.add(CollectionItem(card_id=card.id, quantity=1, for_trade=False))
+        else:
+            for item in items:
+                db.delete(item)
+
+    db.add(card)
+    try:
+        db.commit()
+    except IntegrityError as exc:  # pragma: no cover - integridade do banco
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Conflito ao atualizar a carta") from exc
+
+    card = _fetch_card(db, card.id) or card
+    return _card_to_pt_schema(card)
+
+
+@app.get("/cards", response_model=List[CardOutPT])
 def list_cards(
     q: Optional[str] = None,
     set_id: Optional[str] = None,
@@ -270,7 +568,7 @@ def list_cards(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-) -> List[CardOut]:
+) -> List[CardOutPT]:
     statement = select(Card).options(selectinload(Card.collection_items), selectinload(Card.price_quotes))
 
     if q:
@@ -289,23 +587,15 @@ def list_cards(
         statement = statement.limit(limit)
 
     results = db.execute(statement).scalars().all()
-    return [_card_to_schema(card) for card in results]
+    return [_card_to_pt_schema(card) for card in results]
 
 
-@app.get("/cards/{card_id}", response_model=CardOut)
-def get_card(card_id: int, db: Session = Depends(get_db)) -> CardOut:
-    card = (
-        db.execute(
-            select(Card)
-            .options(selectinload(Card.collection_items), selectinload(Card.price_quotes))
-            .where(Card.id == card_id)
-        )
-        .scalars()
-        .first()
-    )
+@app.get("/cards/{card_id}", response_model=CardOutPT)
+def get_card(card_id: int, db: Session = Depends(get_db)) -> CardOutPT:
+    card = _fetch_card(db, card_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Card not found")
-    return _card_to_schema(card)
+    return _card_to_pt_schema(card)
 
 
 @app.post("/collection", response_model=CollectionOut, status_code=201)
