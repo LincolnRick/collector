@@ -8,3 +8,4 @@ pytesseract
 streamlit
 requests
 python-dotenv
+chardet
