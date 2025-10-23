@@ -52,7 +52,7 @@ if uploaded_file is not None:
 
 if st.session_state.csv_rows:
     st.subheader("Pré-visualização")
-    st.dataframe(st.session_state.csv_rows, use_container_width=True)
+    st.dataframe(st.session_state.csv_rows, width="stretch")
 
     client = get_client()
 

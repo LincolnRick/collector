@@ -53,7 +53,7 @@ chart_data = {
     "Raridade": list(rarity_counter.keys()),
     "Quantidade": list(rarity_counter.values()),
 }
-st.bar_chart(chart_data, x="Raridade", y="Quantidade", use_container_width=True)
+st.bar_chart(chart_data, x="Raridade", y="Quantidade", width="stretch")
 
 st.subheader("Tipos encontrados")
 if unique_types:
