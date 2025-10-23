@@ -5,3 +5,6 @@ pydantic
 pillow
 opencv-python
 pytesseract
+streamlit
+requests
+python-dotenv
