@@ -8,3 +8,10 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Pokedex Collector API")
 
 app.include_router(cards_router)
+
+
+@app.get("/health")
+def healthcheck() -> dict[str, str]:
+    """Endpoint simples para verificação de status do backend."""
+
+    return {"status": "ok"}

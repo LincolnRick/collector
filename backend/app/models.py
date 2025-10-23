@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy import Boolean, Column, Integer, String, Text
 
 from .database import Base
 
@@ -22,3 +22,4 @@ class Card(Base):
     resistencias = Column(String, nullable=True)
     recuo = Column(String, nullable=True)
     imagem = Column(String, nullable=True)
+    possui = Column(Boolean, default=False, nullable=False)
