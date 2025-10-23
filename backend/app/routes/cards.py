@@ -23,3 +23,11 @@ def create_card(card: schemas.CardCreate, db: Session = Depends(get_db)):
         return crud.create_card(db, card)
     except Exception as exc:  # pragma: no cover - safeguard for unexpected errors
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.patch("/{card_id}", response_model=schemas.Card)
+def update_card(card_id: int, card: schemas.CardUpdate, db: Session = Depends(get_db)):
+    db_card = crud.update_card(db, card_id, card)
+    if db_card is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
+    return db_card

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -76,6 +77,10 @@ class CollectorAPIClient:
                 errors.append({"index": index, "error": str(exc)})
         return created, errors
 
+    def update_card(self, card_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = self._request("PATCH", f"/cards/{card_id}", json=payload)
+        return dict(response or {})
+
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         url = self._build_url(path)
         response = requests.request(method, url, timeout=self.timeout, **kwargs)
@@ -94,47 +99,91 @@ def get_client() -> CollectorAPIClient:
 def parse_card_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Converte dados crus (ex.: CSV) para o formato aceito pela API."""
 
-    def _parse_json_or_split(value: Optional[str]) -> Optional[Any]:
+    def _normalize_key(key: str) -> str:
+        normalized = unicodedata.normalize("NFKD", key)
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = normalized.lower().strip()
+        for token in (" ", "-", "/"):
+            normalized = normalized.replace(token, "_")
+        return normalized
+
+    def _parse_bool(value: Any) -> Optional[bool]:
         if value is None:
             return None
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return [item.strip() for item in value.split("|") if item.strip()]
+        text = str(value).strip().lower()
+        if text in {"", "nao", "não", "false", "0", "no", "n"}:
+            return False
+        if text in {"sim", "yes", "true", "1", "possuo", "tenho"}:
+            return True
+        return None
+
+    field_aliases = {
+        "nome": "nome",
+        "name": "nome",
+        "hp": "hp",
+        "tipo": "tipo",
+        "type": "tipo",
+        "raridade": "raridade",
+        "rarity": "raridade",
+        "set": "set",
+        "conjunto": "set",
+        "set_id": "set_id",
+        "numero": "numero",
+        "número": "numero",
+        "number": "numero",
+        "artista": "artista",
+        "artist": "artista",
+        "habilidade": "habilidade_nome",
+        "habilidade_nome": "habilidade_nome",
+        "ability": "habilidade_nome",
+        "texto_da_habilidade": "habilidade_desc",
+        "habilidade_texto": "habilidade_desc",
+        "ability_text": "habilidade_desc",
+        "ataques": "ataques",
+        "attacks": "ataques",
+        "fraquezas": "fraquezas",
+        "fraqueza": "fraquezas",
+        "weaknesses": "fraquezas",
+        "resistencias": "resistencias",
+        "resistências": "resistencias",
+        "resistances": "resistencias",
+        "recuo": "recuo",
+        "retreat": "recuo",
+        "retreat_cost": "recuo",
+        "imagem": "imagem",
+        "imagem_arquivo": "imagem",
+        "image": "imagem",
+        "image_url": "imagem",
+        "possui": "possui",
+        "tem": "possui",
+        "tenho": "possui",
+    }
 
     payload: Dict[str, Any] = {}
     for key, value in raw.items():
-        if value is None:
+        if key is None:
+            continue
+        normalized_key = _normalize_key(str(key))
+        canonical_key = field_aliases.get(normalized_key)
+        if not canonical_key:
             continue
         if isinstance(value, str):
             value = value.strip()
             if value == "":
                 continue
-        payload[key] = value
 
-    if "hp" in payload:
-        try:
-            payload["hp"] = int(payload["hp"])
-        except (TypeError, ValueError):
-            payload.pop("hp", None)
+        if canonical_key == "hp":
+            digits = "".join(ch for ch in str(value) if ch.isdigit())
+            payload[canonical_key] = digits or str(value)
+            continue
 
-    list_fields = {"attacks", "weaknesses", "resistances", "retreat_cost"}
-    for field in list_fields:
-        if field in raw:
-            parsed = _parse_json_or_split(raw.get(field))
-            if parsed is not None:
-                payload[field] = parsed
+        if canonical_key == "possui":
+            parsed_bool = _parse_bool(value)
+            if parsed_bool is not None:
+                payload[canonical_key] = parsed_bool
+            continue
 
-    if "for_trade" in payload:
-        value = str(payload["for_trade"]).strip().lower()
-        payload["for_trade"] = value in {"1", "true", "yes", "sim"}
-
-    # compatibilidade com o modelo Pydantic (alias "type")
-    if "type" not in payload and "card_type" in payload:
-        payload["type"] = payload.pop("card_type")
+        payload[canonical_key] = value
 
     return payload
 

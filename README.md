@@ -38,8 +38,18 @@ Por padrão o servidor ficará disponível em `http://localhost:8000`.
 As páginas ficarão acessíveis no navegador padrão exibindo:
 
 - **Importar CSV:** upload de arquivos e envio em lote para a API.
-- **Cartas:** listagem com filtros de nome, tipo e raridade.
-- **Coleção:** métricas e resumos da coleção cadastrada.
+- **Cartas:** listagem com filtros de nome, tipo e raridade, além de botões para marcar se cada carta já faz parte da sua coleção.
+- **Coleção:** métricas e resumos da coleção cadastrada, com indicadores de progresso (cartas possuídas x faltantes).
+
+### Imagens das cartas
+
+Para que as imagens sejam exibidas no frontend, organize os arquivos correspondentes em uma pasta local e informe o caminho através da variável de ambiente `CARD_IMAGES_DIR` (por exemplo, `export CARD_IMAGES_DIR=./data/imagens`). O CSV deve conter o nome do arquivo na coluna `Imagem`. O Streamlit tentará localizar as imagens automaticamente nas seguintes pastas, em ordem:
+
+1. Diretório configurado em `CARD_IMAGES_DIR`.
+2. `./images`
+3. `./data/images`
+
+Caso a imagem não seja encontrada em nenhum desses caminhos, a carta será exibida sem miniatura.
 
 ## Estrutura relevante
 
