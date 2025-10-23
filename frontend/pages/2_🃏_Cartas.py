@@ -38,7 +38,7 @@ if not cards:
     st.info("Nenhuma carta cadastrada até o momento.")
     if st.button("Recarregar"):
         load_cards.clear()
-        st.experimental_rerun()
+        st.rerun()
     st.stop()
 
 name_filter = st.text_input("Filtrar por nome", placeholder="Bulbasaur")
@@ -59,7 +59,7 @@ st.caption(f"Mostrando {len(filtered_cards)} de {len(cards)} cartas.")
 
 if st.button("Atualizar lista"):
     load_cards.clear()
-    st.experimental_rerun()
+    st.rerun()
 
 if not filtered_cards:
     st.warning("Nenhuma carta corresponde aos filtros selecionados.")
@@ -111,14 +111,14 @@ else:
                         with st.spinner("Atualizando carta..."):
                             client.update_card(card["id"], {"possui": False})
                         load_cards.clear()
-                        st.experimental_rerun()
+                        st.rerun()
                 else:
                     st.info("Você ainda não possui esta carta.")
                     if st.button("Marcar como tenho", key=f"set_{card['id']}"):
                         with st.spinner("Atualizando carta..."):
                             client.update_card(card["id"], {"possui": True})
                         load_cards.clear()
-                        st.experimental_rerun()
+                        st.rerun()
 
     with st.expander("Resumo por tipo"):
         by_type: Dict[str, int] = defaultdict(int)
