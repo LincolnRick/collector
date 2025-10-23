@@ -65,3 +65,53 @@ def guess_local_image(set_id: str | None, number: str | None) -> Optional[str]:
     """Public wrapper around :func:`_guess_local_image` used by services."""
 
     return _guess_local_image(set_id, number)
+
+
+def resolve_image_reference(reference: str | None) -> Optional[str]:
+    """Resolve a CSV-provided image reference into a relative path.
+
+    The importer may receive explicit image file names (e.g. from a column
+    named ``Imagem``) that point to assets located inside ``IMAGES_DIR``. This
+    helper verifies the path exists and normalises it so the database stores a
+    POSIX-style relative path, matching the behaviour of
+    :func:`guess_local_image`.
+    """
+
+    if not reference:
+        return None
+
+    reference = reference.strip()
+    if not reference:
+        return None
+
+    root = _images_root()
+    if not root.exists():
+        return None
+
+    candidate = Path(reference)
+
+    def _normalise(path: Path) -> Optional[str]:
+        if not path.exists():
+            return None
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            relative = path
+        return relative.as_posix()
+
+    if candidate.is_absolute():
+        return _normalise(candidate)
+
+    # Handle values that are already relative to the images root.
+    resolved = _normalise(root / candidate)
+    if resolved:
+        return resolved
+
+    # Attempt to infer the extension if the reference omitted it.
+    if candidate.suffix == "":
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            resolved = _normalise((root / candidate).with_suffix(ext))
+            if resolved:
+                return resolved
+
+    return None

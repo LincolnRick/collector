@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import Card
-from .images import guess_local_image
+from .images import guess_local_image, resolve_image_reference
 
 
 def _parse_list(value: Optional[str]) -> Optional[list[str]]:
@@ -171,7 +171,12 @@ def import_csv(path: str) -> Dict[str, Any]:
                 if "image_url" in payload or "images_small" in payload:
                     card.image_url = payload.get("image_url") or payload.get("images_small")
 
-                local_image = payload.get("image_path") or guess_local_image(set_id, number)
+                local_image = payload.get("image_path")
+                if not local_image:
+                    pt_image = payload.get("Imagem") or payload.get("imagem")
+                    local_image = resolve_image_reference(pt_image)
+                if not local_image:
+                    local_image = guess_local_image(set_id, number)
                 if local_image:
                     card.image_path = local_image
 
